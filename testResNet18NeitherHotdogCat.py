@@ -38,4 +38,4 @@ with torch.no_grad():
         total += labels.size(0)
 
 accuracy = 100 * correct / total
-print(f"Zero-shot 3-class accuracy using ImageNet logits: {accuracy:.2f}%")
+print(f"Zero-shot 3-class accuracy: {accuracy:.2f}%")
