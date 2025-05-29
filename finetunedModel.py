@@ -24,6 +24,7 @@ criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(ResNet.parameters(), lr=1e-4)
 
 # Training loop
+best_val_acc = 0.0
 num_epochs = 10
 for epoch in range(num_epochs):
     ResNet.train()
@@ -64,5 +65,9 @@ for epoch in range(num_epochs):
 
     val_acc = 100 * correct / total
     print(f"Validation Accuracy: {val_acc:.2f}%")
-    
-torch.save(ResNet.state_dict(), "resnet18_hotdog_cat.pth")
+
+    if val_acc > best_val_acc:
+        best_val_acc = val_acc
+        torch.save(ResNet.state_dict(), "resnet18_hotdog_cat_best.pth")
+        print(f"New best model saved with {val_acc:.2f}% validation accuracy.")
+

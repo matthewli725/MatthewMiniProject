@@ -119,7 +119,7 @@ transform = transforms.Compose([
 train_dataset = CombinedHotdogCatDataset(hotdog_train_path, cat_train_data, transform)
 test_dataset = CombinedHotdogCatDataset(hotdog_test_path, cat_test_data, transform)
 
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=4)
+train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=16)
 
 
