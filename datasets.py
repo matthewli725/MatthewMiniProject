@@ -122,4 +122,15 @@ test_dataset = CombinedHotdogCatDataset(hotdog_test_path, cat_test_data, transfo
 train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=16)
 
+count = 0
+for i in range(4410):  # adjust the range as needed
+    img, label = train_loader.dataset[i]
+    if label == 2:
+        count += 1
+    print(f"Sample {i} - Label: {label} - Image type: {type(img)}")
+
+print(count)
+
+
+
 

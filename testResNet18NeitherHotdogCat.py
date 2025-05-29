@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 from torch.utils.data import Dataset
-from datasets import train_loader, test_loader
+from datasets import test_loader
 
 # Load pretrained ResNet18
 ResNet = models.resnet18(weights="DEFAULT")

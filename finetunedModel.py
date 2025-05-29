@@ -68,6 +68,6 @@ for epoch in range(num_epochs):
 
     if val_acc > best_val_acc:
         best_val_acc = val_acc
-        torch.save(ResNet.state_dict(), "resnet18_hotdog_cat_best.pth")
+        torch.save(ResNet.state_dict(), "finetunedResNet.pth")
         print(f"New best model saved with {val_acc:.2f}% validation accuracy.")
 
