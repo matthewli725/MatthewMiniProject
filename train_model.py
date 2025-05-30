@@ -1,6 +1,7 @@
 import torch
 from torch import nn
-from model_utils import evaluate_model
+from model_utils import evaluate_model, build_model
+from datasets import get_data_loaders
 
 def train_model(model, train_loader, test_loader, device, num_epochs=10, lr=1e-4, save_path="finetunedResnet.pth"):
     model = model.to(device)
@@ -33,3 +34,11 @@ def train_model(model, train_loader, test_loader, device, num_epochs=10, lr=1e-4
             best_val_acc = val_acc
             torch.save(model.state_dict(), save_path)
             print(f"New best model saved with {val_acc:.2f}% validation accuracy.")
+            
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else
+                          "mps" if torch.backends.mps.is_available() else
+                          "cpu")
+    model = build_model()
+    train_loader, test_loader = get_data_loaders()
+    train_model(model, train_loader, test_loader, device)
