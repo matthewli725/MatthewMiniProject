@@ -1,136 +1,205 @@
 # datasets.py
+
+import os
+import random
+from pathlib import Path
+from PIL import Image
+import numpy as np
+import torch
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 import kagglehub
 import h5py
-import numpy as np
-from pathlib import Path
-from torch.utils.data import Dataset
-from torchvision import transforms
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
-from PIL import Image
-import torch
-import os
 
-
-def get_hotdog_train_test_paths():
-    base = Path(kagglehub.dataset_download("thedatasith/hotdog-nothotdog"))
-    # Search for nested 'train' folder
-    train_folders = list(base.rglob("train"))
-    test_folders = list(base.rglob("test"))
-    return train_folders[0], test_folders[0]
-
-
-def get_cat_path():
-    return kagglehub.dataset_download("sagar2522/cat-vs-non-cat")
-
-
-def load_cat_data():
-    cat_dir = Path(get_cat_path())
-    train_file = cat_dir / "train_catvsnoncat.h5"
-    test_file = cat_dir / "test_catvsnoncat.h5"
-    with h5py.File(train_file, "r") as f:
-        train_x = np.array(f["train_set_x"][:])  # shape (m, 64, 64, 3)
-        train_y = np.array(f["train_set_y"][:])  # shape (m,)
-    with h5py.File(test_file, "r") as f:
-        test_x = np.array(f["test_set_x"][:])
-        test_y = np.array(f["test_set_y"][:])
-
-    return train_x, train_y, test_x, test_y
-
-def load_cat_data_images():
-    train_x, train_y, test_x, test_y = load_cat_data()
-
-    # train_y == 1 → cat (label = 2), 0 → not cat (label = 0)
-    def convert(images, labels):
-        data = []
-        for img_arr, label in zip(images, labels):
-            img = Image.fromarray(img_arr)  # shape (64, 64, 3), uint8
-            label_mapped = 2 if label == 1 else 0
-            data.append((img, label_mapped))
-        return data
-
-    train_data = convert(train_x, train_y)
-    test_data = convert(test_x, test_y)
-    return train_data, test_data
-
-
-class CatDataset(Dataset):
-    def __init__(self, images, label, transform=None):
-        self.images = images  # shape: (N, 64, 64, 3)
-        self.label = label    # scalar like 1 or 2
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, idx):
-        img = self.images[idx].astype(np.uint8)
-        img = Image.fromarray(img)
-        if self.transform:
-            img = self.transform(img)
-        return img, self.label
-    
+# Constants
 class_names = ['neither', 'hotdog', 'cat']
 class_to_idx = {'nothotdog': 0, 'hotdog': 1, 'cat': 2}
+MAX_TRAIN_PER_CLASS = 500
+MAX_TEST_PER_CLASS = 50
 
+def get_hotdog_paths():
+    base = Path(kagglehub.dataset_download("thedatasith/hotdog-nothotdog"))
+    return list(base.rglob("train"))[0], list(base.rglob("test"))[0]
 
-class CombinedHotdogCatDataset(Dataset):
-    def __init__(self, hotdog_dir, cat_data, transform=None):
+def load_crawford_cat_images():
+    base = Path(kagglehub.dataset_download("crawford/cat-dataset"))
+    cat_folder = base / "CAT_00"
+    crawford_cats = []
+
+    for img_file in cat_folder.glob("*.jpg"):
+        try:
+            img = Image.open(img_file).convert("RGB")
+            crawford_cats.append((img, 2))  # label 2 = cat
+        except Exception as e:
+            print(f"Failed to load {img_file}: {e}")
+    
+    return crawford_cats
+
+def load_cat_h5_data():
+    base = Path(kagglehub.dataset_download("sagar2522/cat-vs-non-cat"))
+    def read(file): return h5py.File(base / file, "r")
+
+    with read("train_catvsnoncat.h5") as f:
+        train_x, train_y = np.array(f["train_set_x"]), np.array(f["train_set_y"])
+    with read("test_catvsnoncat.h5") as f:
+        test_x, test_y = np.array(f["test_set_x"]), np.array(f["test_set_y"])
+
+    return (train_x, train_y), (test_x, test_y)
+
+def preprocess_cat_data():
+    def convert(images, labels):
+        return [
+            (Image.fromarray(img.astype(np.uint8)), 2 if label == 1 else 0)
+            for img, label in zip(images, labels)
+        ]
+
+    (train_x, train_y), (test_x, test_y) = load_cat_h5_data()
+    train = convert(train_x, train_y)
+    test = convert(test_x, test_y)
+    train_cats = [x for x in train if x[1] == 2]
+    train_notcats = [x for x in train if x[1] == 0]
+    test_cats = [x for x in test if x[1] == 2]
+    test_notcats = [x for x in test if x[1] == 0]
+
+    train_cats.extend(load_crawford_cat_images())
+    return train_cats, train_notcats, test_cats, test_notcats
+
+class CombinedDataset(Dataset):
+    def __init__(self, hotdog_dir, cat_data, notcat_data, transform=None):
         self.samples = []
         self.transform = transform
 
-        # Load hotdog dataset from folders
-        class_map = {'nothotdog': 0, 'hotdog': 1}
-        for cls in ['nothotdog', 'hotdog']:
-            class_folder = os.path.join(hotdog_dir, cls)
-            for fname in os.listdir(class_folder):
-                if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    path = os.path.join(class_folder, fname)
-                    label = class_map[cls]
-                    self.samples.append((path, label))
+        for cls, label in {'nothotdog': 0, 'hotdog': 1}.items():
+            folder = os.path.join(hotdog_dir, cls)
+            self.samples.extend([
+                (os.path.join(folder, f), label)
+                for f in os.listdir(folder)
+                if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+            ])
 
-        # Append cat dataset (already (PIL.Image, label))
         self.samples.extend(cat_data)
+        self.samples.extend(notcat_data)
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         item, label = self.samples[idx]
-        if isinstance(item, str):  # a filepath
-            image = Image.open(item).convert('RGB')
-        else:  # already a PIL image from HDF5
-            image = item
-
+        image = Image.open(item).convert('RGB') if isinstance(item, str) else item
         if self.transform:
             image = self.transform(image)
-
         return image, label
 
+def balance_and_limit(samples, limit_per_class):
+    per_class = {0: [], 1: [], 2: []}
+    for s in samples:
+        per_class[s[1]].append(s)
+    for k in per_class:
+        random.shuffle(per_class[k])
+    return [x for k in per_class for x in per_class[k][:limit_per_class]]
 
-hotdog_train_path, hotdog_test_path = get_hotdog_train_test_paths()
-cat_train_data, cat_test_data = load_cat_data_images()
+def get_data_loaders(batch_size=16, resize=(224, 224), shuffle=True):
+    random.seed(42)
 
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor()
-])
+    hotdog_train_path, hotdog_test_path = get_hotdog_paths()
+    cat_train_data, notcat_train_data, cat_test_data, notcat_test_data = preprocess_cat_data()
 
-train_dataset = CombinedHotdogCatDataset(hotdog_train_path, cat_train_data, transform)
-test_dataset = CombinedHotdogCatDataset(hotdog_test_path, cat_test_data, transform)
+    transform = transforms.Compose([
+        transforms.Resize(resize),
+        transforms.ToTensor()
+    ])
 
-train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=16)
+    # Prepare all train and test samples
+    train_samples = []
+    test_samples = []
 
-count = 0
-for i in range(4410):  # adjust the range as needed
-    img, label = train_loader.dataset[i]
-    if label == 2:
-        count += 1
-    print(f"Sample {i} - Label: {label} - Image type: {type(img)}")
+    # Hotdog train/test
+    for cls, label in {'nothotdog': 0, 'hotdog': 1}.items():
+        folder_train = os.path.join(hotdog_train_path, cls)
+        train_samples.extend([
+            (os.path.join(folder_train, f), label)
+            for f in os.listdir(folder_train)
+            if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+        ])
+        folder_test = os.path.join(hotdog_test_path, cls)
+        test_samples.extend([
+            (os.path.join(folder_test, f), label)
+            for f in os.listdir(folder_test)
+            if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+        ])
 
-print(count)
+    train_samples.extend(cat_train_data)
+    train_samples.extend(notcat_train_data)
+    test_samples.extend(cat_test_data)
+    test_samples.extend(notcat_test_data)
 
+    # Limit each class to MAX
+    train_samples = balance_and_limit(train_samples, MAX_TRAIN_PER_CLASS)
+    test_samples = balance_and_limit(test_samples, MAX_TEST_PER_CLASS)
 
+    train_dataset = SimpleImageDataset(train_samples, transform)
+    test_dataset = SimpleImageDataset(test_samples, transform)
 
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
 
+    return train_loader, test_loader
+
+class SimpleImageDataset(Dataset):
+    def __init__(self, samples, transform=None):
+        self.samples = samples
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        item, label = self.samples[idx]
+        image = Image.open(item).convert('RGB') if isinstance(item, str) else item
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+def print_dataset_stats():
+    hotdog_train_path, hotdog_test_path = get_hotdog_paths()
+
+    hotdog_train_count = sum(
+        len(os.listdir(os.path.join(hotdog_train_path, cls)))
+        for cls in ['hotdog', 'nothotdog']
+    )
+
+    hotdog_test_count = sum(
+        len(os.listdir(os.path.join(hotdog_test_path, cls)))
+        for cls in ['hotdog', 'nothotdog']
+    )
+
+    (train_x, train_y), (test_x, test_y) = load_cat_h5_data()
+    cat_train_total = len(train_y)
+    cat_test_total = len(test_y)
+
+    cat_train_pos = int(np.sum(train_y))
+    cat_train_neg = cat_train_total - cat_train_pos
+    cat_test_pos = int(np.sum(test_y))
+    cat_test_neg = cat_test_total - cat_test_pos
+
+    crawford_count = len(load_crawford_cat_images())
+
+    print("== Dataset Summary (before reduction) ==")
+    print(f"Hotdog/NotHotdog Train: {hotdog_train_count}")
+    print(f"Hotdog/NotHotdog Test : {hotdog_test_count}")
+    print()
+    print(f"HDF5 Cats/NotCats Train: {cat_train_total} (Cats: {cat_train_pos}, NotCats: {cat_train_neg})")
+    print(f"HDF5 Cats/NotCats Test : {cat_test_total} (Cats: {cat_test_pos}, NotCats: {cat_test_neg})")
+    print()
+    print(f"Crawford Cats (CAT_00): {crawford_count} (added to train set only)")
+    print()
+    total_train = hotdog_train_count + cat_train_total + crawford_count
+    total_test = hotdog_test_count + cat_test_total
+    print(f"Total Training Samples: {total_train}")
+    print(f"Total Testing Samples : {total_test}")
+
+if __name__ == "__main__":
+    print_dataset_stats()
+    train_loader, test_loader = get_data_loaders()
+    print(f"Reduced Train Size: {len(train_loader.dataset)}")
+    print(f"Reduced Test Size : {len(test_loader.dataset)}")
